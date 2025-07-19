@@ -162,6 +162,12 @@ def main():
     process_parser.add_argument('input_file', help='Input JSON file')
     process_parser.add_argument('--output', help='Output JSON file')
     
+    # Calendar analysis command
+    analyze_parser = subparsers.add_parser('analyze', help='Analyze user calendar slots')
+    analyze_parser.add_argument('--email', required=True, help='User email to analyze')
+    analyze_parser.add_argument('--days', type=int, default=7, help='Number of days to analyze (default: 7)')
+    analyze_parser.add_argument('--json', action='store_true', help='Output as JSON')
+    
     args = parser.parse_args()
     
     if args.command == 'server':
@@ -182,6 +188,16 @@ def main():
                 json.dump(result, f, indent=2)
         else:
             print(json.dumps(result, indent=2))
+    
+    elif args.command == 'analyze':
+        # Analyze user calendar
+        from utils.calendar_slot_analyzer import CalendarSlotAnalyzer
+        
+        analyzer = CalendarSlotAnalyzer()
+        analysis = analyzer.analyze_user_calendar(args.email, args.days)
+        
+        if args.json and analysis:
+            print(json.dumps(analysis, indent=2, default=str))
     
     else:
         parser.print_help()

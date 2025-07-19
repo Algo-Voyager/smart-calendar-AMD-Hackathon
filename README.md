@@ -81,6 +81,15 @@ python main.py server --host 0.0.0.0 --port 5000
 python main.py test --url http://localhost:5000
 ```
 
+#### 5. Analyze User Calendar (Debug/Development)
+```bash
+# Analyze userone.amd@gmail.com calendar for next 7 days
+python main.py analyze --email userone.amd@gmail.com
+
+# Analyze for specific number of days with JSON output
+python main.py analyze --email usertwo.amd@gmail.com --days 3 --json
+```
+
 ## Usage
 
 ### API Endpoint
@@ -116,6 +125,19 @@ from main import your_meeting_assistant
 
 # For hackathon submission
 result = your_meeting_assistant(request_data)
+```
+
+### Calendar Analysis Commands
+```bash
+# Quick analysis using dedicated script
+python scripts/analyze_userone_calendar.py
+
+# Advanced analysis using main CLI
+python main.py analyze --email userone.amd@gmail.com --days 7
+
+# Available analysis options:
+python utils/calendar_slot_analyzer.py --email usertwo.amd@gmail.com --days 5
+python utils/calendar_slot_analyzer.py --email userthree.amd@gmail.com --json
 ```
 
 ## Key Optimizations for Llama-3.2-3B
