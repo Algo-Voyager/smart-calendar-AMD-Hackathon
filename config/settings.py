@@ -24,6 +24,13 @@ class Config:
     TIMEZONE = "+05:30"  # IST timezone
     DEFAULT_DOMAIN = "@amd.com"
     
+    # Available users with calendar tokens
+    AVAILABLE_USERS = [
+        "userone.amd@gmail.com",
+        "usertwo.amd@gmail.com", 
+        "userthree.amd@gmail.com"
+    ]
+    
     # API Configuration
     API_HOST = "0.0.0.0"
     API_PORT = 5000
@@ -93,5 +100,16 @@ JSON:"""
     @classmethod
     def get_token_path(cls, email: str) -> str:
         """Get token file path for a user email"""
+        # Validate that the user has an available token
+        if email not in cls.AVAILABLE_USERS:
+            raise ValueError(f"User {email} does not have a calendar token. Available users: {cls.AVAILABLE_USERS}")
+        
         username = email.split("@")[0]
-        return os.path.join(cls.CALENDAR_TOKENS_PATH, f"{username}.token")
+        token_file = f"{username}.token"
+        token_path = os.path.join(cls.CALENDAR_TOKENS_PATH, token_file)
+        
+        # Double-check that the token file actually exists
+        if not os.path.exists(token_path):
+            raise FileNotFoundError(f"Token file not found: {token_path}. Available users: {cls.AVAILABLE_USERS}")
+        
+        return token_path

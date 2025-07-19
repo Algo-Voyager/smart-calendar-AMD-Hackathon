@@ -166,10 +166,10 @@ class SmartCalendarStarter:
             "Request_id": "test-startup-001",
             "Datetime": "19-07-2025T12:34:55",
             "Location": "Test Location",
-            "From": "test@amd.com",
+            "From": "userone.amd@gmail.com",
             "Attendees": [
-                {"email": "user1@amd.com"},
-                {"email": "user2@amd.com"}
+                {"email": "usertwo.amd@gmail.com"},
+                {"email": "userthree.amd@gmail.com"}
             ],
             "Subject": "Test Meeting",
             "EmailContent": "Let's have a test meeting tomorrow for 30 minutes to verify the system works."

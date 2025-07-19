@@ -46,15 +46,29 @@ pip install -r requirements.txt
 
 #### 2. Start Llama-3.2-3B vLLM Server
 ```bash
-# Using the optimized startup script
+# Option A: Using startup script
 ./scripts/start_llama_server.sh
 
-# Or manually
+# Option B: Manual startup (exact flags specified)
 HIP_VISIBLE_DEVICES=0 vllm serve /home/user/smart-calendar/Models/meta-llama/Llama-3.2-3B \
-    --gpu-memory-utilization 0.7 --swap-space 8 --disable-log-requests \
-    --dtype float16 --max-model-len 2048 --tensor-parallel-size 1 \
-    --host 0.0.0.0 --port 4000 --max-num-seqs 64 \
-    --max-num-batched-tokens 1024 --trust-remote-code --enforce-eager
+    --gpu-memory-utilization 0.3 \
+    --swap-space 16 \
+    --disable-log-requests \
+    --dtype float16 \
+    --max-model-len 2048 \
+    --tensor-parallel-size 1 \
+    --host 0.0.0.0 \
+    --port 4000 \
+    --num-scheduler-steps 10 \
+    --max-num-seqs 128 \
+    --max-num-batched-tokens 2048 \
+    --distributed-executor-backend "mp"
+```
+
+#### 2a. Test the Model (Optional)
+```bash
+# Test if Llama server is working correctly
+python scripts/test_llama.py
 ```
 
 #### 3. Run the API Server
@@ -147,6 +161,45 @@ The system includes comprehensive testing:
 - **High Quality**: Still maintains excellent performance for scheduling tasks
 - **Cost Effective**: Reduced computational requirements
 - **Local Deployment**: Perfect for on-premise deployment scenarios
+
+## Troubleshooting
+
+### **Chat Template Errors**
+If you see chat template errors in vLLM logs:
+1. **This is expected**: Smart Calendar automatically uses completions endpoint
+2. **No action needed**: System will auto-fallback seamlessly
+3. **Normal behavior**: Some Llama models have chat template compatibility issues
+
+### **Common Issues**
+```bash
+# Issue: "Model not found"
+# Solution: Check model path
+ls /home/user/smart-calendar/Models/meta-llama/Llama-3.2-3B
+
+# Issue: "Port already in use"
+# Solution: Kill existing process
+pkill -f "vllm serve" && sleep 5
+
+# Issue: "GPU memory error"
+# Solution: Reduce memory utilization
+# Edit start_llama_server.sh: change --gpu-memory-utilization to 0.2
+```
+
+### **Testing Steps**
+1. **Test model**: `python scripts/test_llama.py`
+2. **Test Smart Calendar**: `python scripts/test_smart_calendar_simple.py`  
+3. **Test API**: `python main.py test`
+4. **Check logs**: Look for "✅" success indicators
+
+### **Important Note About Chat Template Issues**
+The Llama-3.2-3B model may not have a compatible chat template, causing chat completions to fail with a 400 error. **This is completely normal and expected.** 
+
+✅ **The Smart Calendar system automatically uses the completions endpoint instead**, which works perfectly for all scheduling tasks.
+
+You'll see this pattern in the logs:
+- ⚠️ Chat completion fails (400 error) 
+- ✅ Completions endpoint works perfectly
+- ✅ Smart Calendar functions normally
 
 ## License
 

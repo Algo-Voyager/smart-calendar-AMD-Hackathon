@@ -46,7 +46,7 @@ class LLMClient:
     
     def _make_completion_request(self, prompt: str, temperature: float = None, 
                                use_cache: bool = True) -> Optional[str]:
-        """Optimized completion request for Llama-3.2-3B"""
+        """Optimized completion request for Llama-3.2-3B - uses completions endpoint directly"""
         temperature = temperature if temperature is not None else self.temperature
         cache_key = self._get_cache_key(prompt, temperature)
         
@@ -61,38 +61,47 @@ class LLMClient:
         try:
             start_time = time.time()
             
-            # Optimized parameters for Llama-3.2-3B
-            response = self.client.chat.completions.create(
-                model=self.model_path,
-                temperature=temperature,
-                top_p=self.top_p,
-                messages=[{
-                    "role": "user",
-                    "content": prompt
-                }],
-                max_tokens=self.max_tokens,
+            # Use completions endpoint directly since chat template has issues
+            logger.debug("Using completions endpoint for Llama-3.2-3B")
+            import requests
+            
+            response = requests.post(
+                f"{self.model_config['base_url']}/completions",
+                json={
+                    "model": self.model_path,
+                    "prompt": prompt,
+                    "max_tokens": self.max_tokens,
+                    "temperature": temperature,
+                    "top_p": self.top_p,
+                    "stop": ["</s>", "\n\n"]
+                },
                 timeout=self.config.LLM_TIMEOUT,
-                stop=["</s>", "\n\n\n"]  # Llama-3.2 specific stop tokens
+                headers={'Content-Type': 'application/json'}
             )
             
-            response_time = time.time() - start_time
-            logger.info(f"Llama-3.2-3B response: {response_time:.2f}s")
-            
-            content = response.choices[0].message.content.strip()
-            
-            # Cache the response
-            if use_cache:
-                self._response_cache[cache_key] = content
-                # Limit cache size for memory efficiency
-                if len(self._response_cache) > 100:
-                    # Remove oldest entries
-                    oldest_key = next(iter(self._response_cache))
-                    del self._response_cache[oldest_key]
-            
-            return content
+            if response.status_code == 200:
+                result = response.json()
+                content = result['choices'][0]['text'].strip()
+                
+                response_time = time.time() - start_time
+                logger.info(f"Llama-3.2-3B completions response: {response_time:.2f}s")
+                
+                # Cache the response
+                if use_cache:
+                    self._response_cache[cache_key] = content
+                    # Limit cache size for memory efficiency
+                    if len(self._response_cache) > 100:
+                        # Remove oldest entries
+                        oldest_key = next(iter(self._response_cache))
+                        del self._response_cache[oldest_key]
+                
+                return content
+            else:
+                logger.error(f"Completions request failed: {response.status_code} - {response.text}")
+                return None
             
         except Exception as e:
-            logger.error(f"Llama-3.2-3B request failed: {e}")
+            logger.error(f"Llama-3.2-3B completions request failed: {e}")
             return None
     
     def parse_email_content(self, email_content: str, default_duration: int = 30) -> Dict[str, Any]:
@@ -106,7 +115,8 @@ class LLMClient:
         response = self._make_completion_request(prompt)
         
         if not response:
-            return self._fallback_email_parsing(email_content, default_duration)
+            logger.warning("LLM request failed, using enhanced fallback parsing")
+            return self._enhanced_fallback_parsing(email_content, default_duration)
         
         # Enhanced JSON extraction for Llama-3.2-3B
         parsed_data = self._extract_json_from_llama_response(response)

@@ -57,11 +57,14 @@ class CalendarManager:
     
     def _get_credentials(self, email: str) -> Credentials:
         """Get Google Calendar credentials for a user"""
-        token_path = self.config.get_token_path(email)
         try:
+            token_path = self.config.get_token_path(email)
             return Credentials.from_authorized_user_file(token_path)
+        except (ValueError, FileNotFoundError) as e:
+            logger.error(f"❌ Calendar token not available for {email}: {e}")
+            raise ValueError(f"User {email} does not have calendar access. Please use one of the available users with tokens.")
         except Exception as e:
-            logger.error(f"Failed to load credentials for {email}: {e}")
+            logger.error(f"❌ Failed to load credentials for {email}: {e}")
             raise
     
     def _build_calendar_service(self, email: str):

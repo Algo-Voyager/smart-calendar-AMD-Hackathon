@@ -209,10 +209,10 @@ class SmartCalendarTestClient:
                 "Request_id": "test-002", 
                 "Datetime": "19-07-2025T14:00:00",
                 "Location": "Conference Room A",
-                "From": "manager@amd.com",
+                "From": "usertwo.amd@gmail.com",
                 "Attendees": [
-                    {"email": "dev1@amd.com"},
-                    {"email": "dev2@amd.com"}
+                    {"email": "userone.amd@gmail.com"},
+                    {"email": "userthree.amd@gmail.com"}
                 ],
                 "Subject": "Sprint Planning",
                 "EmailContent": "Let's schedule our sprint planning for next Monday morning, 1 hour should be enough."
