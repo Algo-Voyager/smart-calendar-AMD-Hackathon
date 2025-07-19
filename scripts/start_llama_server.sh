@@ -20,14 +20,6 @@ if [ ! -d "$MODEL_PATH" ]; then
     exit 1
 fi
 
-# Check if GPU is available
-if ! command -v nvidia-smi &> /dev/null; then
-    echo "Warning: nvidia-smi not found. Continuing anyway..."
-else
-    echo "GPU Status:"
-    nvidia-smi --query-gpu=index,name,memory.used,memory.total --format=csv,noheader,nounits
-fi
-
 # Start vLLM server with specified flags for Llama-3.2-3B
 HIP_VISIBLE_DEVICES=0 vllm serve "$MODEL_PATH" \
     --gpu-memory-utilization 0.3 \
