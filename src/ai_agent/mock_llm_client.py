@@ -100,12 +100,26 @@ class MockLLMClient:
             topic = "Status Update Meeting"
         elif "project" in content_lower:
             topic = "Project Meeting"
-        
+
+        # 🎯 NEW: Priority detection for mock client
+        priority = "normal"  # default priority
+        high_priority_indicators = [
+            "urgent", "high priority", "asap", "emergency", "critical", 
+            "important", "must schedule", "required meeting", "mandatory"
+        ]
+
+        for indicator in high_priority_indicators:
+            if indicator in content_lower:
+                priority = "high"
+                logger.info(f"🚨 MOCK: HIGH PRIORITY meeting detected: '{indicator}' found")
+                break
+
         result = {
             'participants': participants,
             'duration_minutes': duration,
             'time_constraints': time_constraints,
-            'topic': topic
+            'topic': topic,
+            'priority': priority  # 🎯 NEW: Add priority field
         }
         
         logger.info(f"🤖 MOCK: Parsed email -> {result}")

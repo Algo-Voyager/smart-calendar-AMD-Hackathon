@@ -11,6 +11,7 @@ from concurrent.futures import ThreadPoolExecutor
 from config.settings import Config
 from src.calendar.calendar_manager import CalendarManager, CalendarEvent
 from src.ai_agent.llm_client import LLMClient
+from src.scheduler.scheduling_validator import SchedulingValidator  # 🔍 NEW: Import validator
 
 logger = logging.getLogger(__name__)
 
@@ -44,11 +45,15 @@ class SmartScheduler:
             from src.ai_agent.mock_llm_client import MockLLMClient
             self.llm_client = MockLLMClient()
         
+        # 🔍 NEW: Initialize scheduling validator
+        self.validator = SchedulingValidator(self.config)
+        logger.info("✅ Scheduling validator initialized")
+        
         logger.info("SmartScheduler initialized")
     
     def process_meeting_request(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Main entry point for processing meeting requests
+        Main entry point for processing meeting requests with iterative validation
         """
         try:
             start_time = datetime.now()
@@ -74,23 +79,26 @@ class SmartScheduler:
             logger.info(f"Parsed meeting parameters: {meeting_params}")
             
             # Step 2: Get calendar data for all attendees
-            calendar_data = self._get_calendar_data_for_attendees(
+            original_calendar_data = self._get_calendar_data_for_attendees(
                 all_attendees, meeting_params.get('time_constraints', 'flexible')
             )
             
-            # Step 3: Find optimal meeting time
-            optimal_time = self._find_optimal_meeting_time(meeting_params, calendar_data)
-            
-            # Step 4: Format output according to hackathon requirements
-            output_data = self._format_output(
-                request_data, 
-                calendar_data, 
-                optimal_time, 
-                meeting_params
+            # 🔍 NEW: Use iterative validation system instead of simple scheduling
+            logger.info(f"🔍 STARTING ITERATIVE VALIDATION & OPTIMIZATION")
+            output_data = self.validator.validate_and_optimize_scheduling(
+                request_data=request_data,
+                original_calendar_data=original_calendar_data,
+                meeting_params=meeting_params,
+                scheduler_instance=self  # Pass self so validator can call our methods
             )
             
             processing_time = (datetime.now() - start_time).total_seconds()
-            logger.info(f"Request processed in {processing_time:.2f} seconds")
+            logger.info(f"Request processed with validation in {processing_time:.2f} seconds")
+            
+            # Add processing time to metadata
+            if "MetaData" not in output_data:
+                output_data["MetaData"] = {}
+            output_data["MetaData"]["total_processing_time"] = f"{processing_time:.2f}s"
             
             return output_data
             
@@ -271,9 +279,81 @@ class SmartScheduler:
         logger.info(f"   🎯 Constraints: {meeting_params.get('time_constraints', 'flexible')}")
         logger.info(f"   👥 Participants: {', '.join(meeting_params.get('participants', []))}")
         
+        # 🚨 NEW: Check if this is a high priority meeting
+        priority = meeting_params.get('priority', 'normal')
+        logger.info(f"   🎖️  Priority: {priority.upper()}")
+        
+        if priority == "high":
+            logger.info(f"🚨 HIGH PRIORITY SCHEDULING - Will reschedule conflicts if needed")
+            return self._priority_based_scheduling(meeting_params, calendar_data)
+        else:
+            logger.info(f"📅 NORMAL PRIORITY SCHEDULING - Finding available slots")
+            return self._normal_priority_scheduling(meeting_params, calendar_data)
+
+    def _priority_based_scheduling(self, meeting_params: Dict[str, Any], 
+                                 calendar_data: Dict[str, List[Dict]]) -> Dict[str, Any]:
+        """High priority scheduling - can reschedule existing meetings"""
+        
+        logger.info(f"🚨 PRIORITY SCHEDULING - Finding preferred time and handling conflicts")
+        
+        duration = meeting_params.get('duration_minutes', 30)
+        time_constraints = meeting_params.get('time_constraints', 'flexible')
+        
+        # Find the preferred time slot based on constraints
+        preferred_slot = self._find_preferred_time_slot(time_constraints, duration)
+        
+        if not preferred_slot:
+            logger.warning(f"❌ Could not determine preferred slot, falling back to normal scheduling")
+            return self._normal_priority_scheduling(meeting_params, calendar_data)
+        
+        preferred_start, preferred_end = preferred_slot
+        logger.info(f"🎯 PREFERRED SLOT: {preferred_start} to {preferred_end}")
+        
+        # Check for conflicts with existing meetings
+        conflicts = self._find_conflicts(preferred_start, preferred_end, calendar_data)
+        
+        if not conflicts:
+            logger.info(f"✅ No conflicts found - scheduling at preferred time")
+            return {
+                'start_time': preferred_start,
+                'end_time': preferred_end,
+                'reasoning': 'High priority meeting scheduled at preferred time with no conflicts'
+            }
+        
+        # Handle conflicts by rescheduling existing meetings
+        logger.info(f"⚠️  Found {len(conflicts)} conflicting meetings - attempting to reschedule them")
+        
+        rescheduled_meetings = []
+        for conflict in conflicts:
+            alternative_slot = self._find_alternative_slot_for_meeting(conflict, calendar_data)
+            if alternative_slot:
+                rescheduled_meetings.append({
+                    'original': conflict,
+                    'new_slot': alternative_slot
+                })
+                logger.info(f"📅 Rescheduled '{conflict['summary']}' to {alternative_slot[0]} - {alternative_slot[1]}")
+            else:
+                logger.warning(f"⚠️  Could not reschedule '{conflict['summary']}' - may need manual intervention")
+        
+        # Update calendar data with rescheduled meetings
+        self._apply_rescheduling(calendar_data, rescheduled_meetings)
+        
+        return {
+            'start_time': preferred_start,
+            'end_time': preferred_end,
+            'reasoning': f'High priority meeting scheduled - rescheduled {len(rescheduled_meetings)} conflicting meetings',
+            'rescheduled_count': len(rescheduled_meetings)
+        }
+
+    def _normal_priority_scheduling(self, meeting_params: Dict[str, Any], 
+                                  calendar_data: Dict[str, List[Dict]]) -> Dict[str, Any]:
+        """Normal priority scheduling - existing logic"""
+        
+        current_time = datetime.now().strftime('%Y-%m-%dT%H:%M:%S+05:30')
+        
         # Try AI-based scheduling first
         try:
-            logger.info(f"🤖 Attempting AI-based scheduling with Llama-3.2-3B...")
+            logger.info(f"🤖 Attempting AI-based scheduling...")
             ai_result = self.llm_client.find_optimal_meeting_time(
                 meeting_params, calendar_data, current_time
             )
@@ -406,6 +486,193 @@ class SmartScheduler:
                 'end_time': end_str,
                 'reasoning': 'No common free time found, suggesting default slot'
             }
+    
+    def _find_preferred_time_slot(self, time_constraints: str, duration: int) -> Optional[tuple[str, str]]:
+        """Find preferred time slot based on constraints"""
+        
+        constraints_lower = time_constraints.lower().strip()
+        now = datetime.now()
+        
+        if 'thursday' in constraints_lower:
+            # Find next Thursday at 9 AM (preferred business start time)
+            days_ahead = (3 - now.weekday()) % 7  # Thursday is weekday 3
+            if days_ahead == 0:
+                if now.hour >= 18:  # Past business hours
+                    days_ahead = 7
+                elif now.hour >= 9:  # Same day but need future time
+                    days_ahead = 7
+            if days_ahead == 0:
+                days_ahead = 7
+                
+            next_thursday = now + timedelta(days=days_ahead)
+            preferred_start = next_thursday.replace(hour=9, minute=0, second=0, microsecond=0)
+            
+        elif 'monday' in constraints_lower:
+            days_ahead = (0 - now.weekday()) % 7
+            if days_ahead == 0 and now.hour >= 9:
+                days_ahead = 7
+            next_monday = now + timedelta(days=days_ahead)
+            preferred_start = next_monday.replace(hour=9, minute=0, second=0, microsecond=0)
+            
+        elif 'tuesday' in constraints_lower:
+            days_ahead = (1 - now.weekday()) % 7
+            if days_ahead == 0 and now.hour >= 9:
+                days_ahead = 7
+            next_tuesday = now + timedelta(days=days_ahead)
+            preferred_start = next_tuesday.replace(hour=9, minute=0, second=0, microsecond=0)
+            
+        elif 'wednesday' in constraints_lower:
+            days_ahead = (2 - now.weekday()) % 7
+            if days_ahead == 0 and now.hour >= 9:
+                days_ahead = 7
+            next_wednesday = now + timedelta(days=days_ahead)
+            preferred_start = next_wednesday.replace(hour=9, minute=0, second=0, microsecond=0)
+            
+        elif 'friday' in constraints_lower:
+            days_ahead = (4 - now.weekday()) % 7
+            if days_ahead == 0 and now.hour >= 9:
+                days_ahead = 7
+            next_friday = now + timedelta(days=days_ahead)
+            preferred_start = next_friday.replace(hour=9, minute=0, second=0, microsecond=0)
+            
+        elif 'tomorrow' in constraints_lower:
+            tomorrow = now + timedelta(days=1)
+            preferred_start = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+            
+        else:
+            # Default: next business day at 9 AM
+            tomorrow = now + timedelta(days=1)
+            while tomorrow.weekday() >= 5:  # Skip weekends
+                tomorrow += timedelta(days=1)
+            preferred_start = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+        
+        preferred_end = preferred_start + timedelta(minutes=duration)
+        
+        return (
+            preferred_start.strftime('%Y-%m-%dT%H:%M:%S+05:30'),
+            preferred_end.strftime('%Y-%m-%dT%H:%M:%S+05:30')
+        )
+
+    def _find_conflicts(self, start_time: str, end_time: str, 
+                       calendar_data: Dict[str, List[Dict]]) -> List[Dict[str, Any]]:
+        """Find conflicting meetings in the given time slot"""
+        
+        conflicts = []
+        
+        for email, events in calendar_data.items():
+            for event in events:
+                if self._times_overlap(start_time, end_time, event['StartTime'], event['EndTime']):
+                    conflicts.append({
+                        'email': email,
+                        'event': event,
+                        'summary': event.get('Summary', 'Unknown Meeting'),
+                        'start': event['StartTime'],
+                        'end': event['EndTime']
+                    })
+        
+        return conflicts
+
+    def _find_alternative_slot_for_meeting(self, conflict: Dict[str, Any], 
+                                         calendar_data: Dict[str, List[Dict]]) -> Optional[tuple[str, str]]:
+        """Find an alternative slot for a conflicting meeting"""
+        
+        original_start = datetime.fromisoformat(conflict['start'].replace('+05:30', ''))
+        original_end = datetime.fromisoformat(conflict['end'].replace('+05:30', ''))
+        duration_minutes = int((original_end - original_start).total_seconds() / 60)
+        
+        # Try to find a slot on the same day first
+        same_day_slots = self._find_available_slots_on_date(
+            original_start.date(), duration_minutes, calendar_data, exclude_conflict=conflict
+        )
+        
+        if same_day_slots:
+            logger.info(f"📅 Found alternative slot on same day for '{conflict['summary']}'")
+            return same_day_slots[0]
+        
+        # Try next few days
+        for days_offset in range(1, 8):
+            target_date = original_start.date() + timedelta(days=days_offset)
+            if target_date.weekday() < 5:  # Weekdays only
+                slots = self._find_available_slots_on_date(
+                    target_date, duration_minutes, calendar_data
+                )
+                if slots:
+                    logger.info(f"📅 Found alternative slot {days_offset} days later for '{conflict['summary']}'")
+                    return slots[0]
+        
+        return None
+
+    def _find_available_slots_on_date(self, target_date, duration_minutes: int, 
+                                    calendar_data: Dict[str, List[Dict]], 
+                                    exclude_conflict: Dict[str, Any] = None) -> List[tuple[str, str]]:
+        """Find available slots on a specific date"""
+        
+        # Create time slots for business hours (9 AM to 6 PM)
+        start_hour = 9
+        end_hour = 18
+        slot_duration = 30  # Check in 30-minute increments
+        
+        available_slots = []
+        
+        for hour in range(start_hour, end_hour):
+            for minute in [0, 30]:
+                if hour == end_hour - 1 and minute == 30:  # Don't go past 6 PM
+                    break
+                    
+                slot_start = datetime.combine(target_date, datetime.min.time()).replace(
+                    hour=hour, minute=minute, second=0, microsecond=0
+                )
+                slot_end = slot_start + timedelta(minutes=duration_minutes)
+                
+                # Check if this slot is free for all participants
+                is_free = True
+                for email, events in calendar_data.items():
+                    for event in events:
+                        # Skip the conflict we're trying to reschedule
+                        if exclude_conflict and event == exclude_conflict.get('event'):
+                            continue
+                            
+                        if self._times_overlap(
+                            slot_start.strftime('%Y-%m-%dT%H:%M:%S+05:30'),
+                            slot_end.strftime('%Y-%m-%dT%H:%M:%S+05:30'),
+                            event['StartTime'],
+                            event['EndTime']
+                        ):
+                            is_free = False
+                            break
+                    if not is_free:
+                        break
+                
+                if is_free:
+                    available_slots.append((
+                        slot_start.strftime('%Y-%m-%dT%H:%M:%S+05:30'),
+                        slot_end.strftime('%Y-%m-%dT%H:%M:%S+05:30')
+                    ))
+        
+        return available_slots
+
+    def _apply_rescheduling(self, calendar_data: Dict[str, List[Dict]], 
+                           rescheduled_meetings: List[Dict[str, Any]]) -> None:
+        """Apply rescheduling changes to calendar data"""
+        
+        for reschedule in rescheduled_meetings:
+            original = reschedule['original']
+            new_slot = reschedule['new_slot']
+            
+            # Find and update the original event
+            for email, events in calendar_data.items():
+                if email == original['email']:
+                    for i, event in enumerate(events):
+                        if (event['StartTime'] == original['start'] and 
+                            event['EndTime'] == original['end'] and
+                            event.get('Summary') == original['summary']):
+                            
+                            # Update the event times
+                            events[i]['StartTime'] = new_slot[0]
+                            events[i]['EndTime'] = new_slot[1]
+                            
+                            logger.info(f"✅ Updated calendar for {email}: moved '{original['summary']}' to {new_slot[0]}")
+                            break
     
     def _format_output(self, request_data: Dict[str, Any], 
                      calendar_data: Dict[str, List[Dict]], 

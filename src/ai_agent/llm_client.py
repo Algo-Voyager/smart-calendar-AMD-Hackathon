@@ -322,11 +322,43 @@ class LLMClient:
                     topic = sentence
                     break
         
+        # 🎯 NEW: Priority detection
+        priority = "normal"  # default priority
+        high_priority_indicators = [
+            r'urgent',
+            r'high\s*priority',
+            r'asap',
+            r'emergency',
+            r'critical',
+            r'important',
+            r'must\s*schedule',
+            r'needs?\s*to\s*happen',
+            r'required\s*meeting',
+            r'mandatory',
+            r'escalated',
+            r'board\s*meeting',
+            r'executive\s*meeting',
+            r'c[eao]o\s*meeting',
+            r'crisis',
+            r'deadline',
+            r'time\s*sensitive'
+        ]
+        
+        # Check email content and subject for priority indicators
+        email_and_subject = content_lower
+        
+        for indicator in high_priority_indicators:
+            if re.search(indicator, email_and_subject):
+                priority = "high"
+                logger.info(f"🚨 HIGH PRIORITY meeting detected: '{indicator}' found in content")
+                break
+        
         return {
             'participants': emails,
             'duration_minutes': duration,
             'time_constraints': time_constraints,
-            'topic': topic
+            'topic': topic,
+            'priority': priority  # 🎯 NEW: Add priority field
         }
     
     def _fallback_email_parsing(self, email_content: str, default_duration: int) -> Dict[str, Any]:

@@ -52,7 +52,7 @@ class Config:
     EMAIL_PARSING_PROMPT = """You are a meeting scheduler. Extract meeting information from the email below and return ONLY a valid JSON response.
 
 REQUIRED JSON FORMAT:
-{{"participants": ["email1@domain.com", "email2@domain.com"], "duration_minutes": 30, "time_constraints": "specific_constraint", "topic": "meeting_topic"}}
+{{"participants": ["email1@domain.com", "email2@domain.com"], "duration_minutes": 30, "time_constraints": "specific_constraint", "topic": "meeting_topic", "priority": "normal"}}
 
 EXTRACTION RULES:
 1. Extract ALL participant email addresses
@@ -64,6 +64,9 @@ EXTRACTION RULES:
    - "tomorrow" → "tomorrow"
    - "Monday morning" → "monday"
 5. Topic: Extract main meeting purpose or use email subject
+6. Priority: Detect priority level:
+   - "high" if content contains: urgent, ASAP, critical, emergency, high priority, must schedule, required, mandatory, deadline, time sensitive, crisis
+   - "normal" for regular meetings
 
 EMAIL CONTENT: {email_content}
 
