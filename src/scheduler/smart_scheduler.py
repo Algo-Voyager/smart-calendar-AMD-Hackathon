@@ -11,7 +11,6 @@ from concurrent.futures import ThreadPoolExecutor
 from config.settings import Config
 from src.calendar.calendar_manager import CalendarManager, CalendarEvent
 from src.ai_agent.llm_client import LLMClient
-from src.scheduler.scheduling_validator import SchedulingValidator  # 🔍 NEW: Import validator
 
 logger = logging.getLogger(__name__)
 
@@ -45,15 +44,11 @@ class SmartScheduler:
             from src.ai_agent.mock_llm_client import MockLLMClient
             self.llm_client = MockLLMClient()
         
-        # 🔍 NEW: Initialize scheduling validator
-        self.validator = SchedulingValidator(self.config)
-        logger.info("✅ Scheduling validator initialized")
-        
         logger.info("SmartScheduler initialized")
     
     def process_meeting_request(self, request_data: Dict[str, Any]) -> Dict[str, Any]:
         """
-        Main entry point for processing meeting requests with iterative validation
+        Main entry point for processing meeting requests
         """
         try:
             start_time = datetime.now()
@@ -79,26 +74,23 @@ class SmartScheduler:
             logger.info(f"Parsed meeting parameters: {meeting_params}")
             
             # Step 2: Get calendar data for all attendees
-            original_calendar_data = self._get_calendar_data_for_attendees(
+            calendar_data = self._get_calendar_data_for_attendees(
                 all_attendees, meeting_params.get('time_constraints', 'flexible')
             )
             
-            # 🔍 NEW: Use iterative validation system instead of simple scheduling
-            logger.info(f"🔍 STARTING ITERATIVE VALIDATION & OPTIMIZATION")
-            output_data = self.validator.validate_and_optimize_scheduling(
-                request_data=request_data,
-                original_calendar_data=original_calendar_data,
-                meeting_params=meeting_params,
-                scheduler_instance=self  # Pass self so validator can call our methods
+            # Step 3: Find optimal meeting time
+            optimal_time = self._find_optimal_meeting_time(meeting_params, calendar_data)
+            
+            # Step 4: Format output according to hackathon requirements
+            output_data = self._format_output(
+                request_data, 
+                calendar_data, 
+                optimal_time, 
+                meeting_params
             )
             
             processing_time = (datetime.now() - start_time).total_seconds()
-            logger.info(f"Request processed with validation in {processing_time:.2f} seconds")
-            
-            # Add processing time to metadata
-            if "MetaData" not in output_data:
-                output_data["MetaData"] = {}
-            output_data["MetaData"]["total_processing_time"] = f"{processing_time:.2f}s"
+            logger.info(f"Request processed in {processing_time:.2f} seconds")
             
             return output_data
             
