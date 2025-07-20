@@ -438,30 +438,79 @@ class LLMClient:
             calendar_data=calendar_summary
         )
         
+        logger.info(f"🤖 LLM SCHEDULING PROMPT:")
+        logger.info(f"   📝 Sending prompt to LLM (first 500 chars): {prompt[:500]}...")
+        
         response = self._make_completion_request(prompt, temperature=0.1)
         
         if not response:
-            # Fallback to algorithmic scheduling
+            logger.warning("❌ No response from LLM, using fallback scheduling")
             return self._fallback_scheduling(meeting_request, calendar_data)
         
+        logger.info(f"🤖 LLM RAW RESPONSE: {response}")
+        
         try:
-            # Extract JSON from response
-            json_start = response.find('{')
-            json_end = response.rfind('}') + 1
+            # Clean and extract JSON from response
+            response_cleaned = response.strip()
+            
+            # Find JSON object boundaries more robustly
+            json_start = -1
+            json_end = -1
+            brace_count = 0
+            
+            for i, char in enumerate(response_cleaned):
+                if char == '{':
+                    if json_start == -1:
+                        json_start = i
+                    brace_count += 1
+                elif char == '}':
+                    brace_count -= 1
+                    if brace_count == 0 and json_start != -1:
+                        json_end = i + 1
+                        break
             
             if json_start >= 0 and json_end > json_start:
-                json_str = response[json_start:json_end]
+                json_str = response_cleaned[json_start:json_end]
+                logger.info(f"🔍 EXTRACTED JSON: {json_str}")
+                
                 scheduling_result = json.loads(json_str)
                 
-                # Validate the response
-                if 'start_time' in scheduling_result and 'end_time' in scheduling_result:
-                    logger.info(f"LLM scheduling result: {scheduling_result}")
-                    return scheduling_result
+                # Validate the response structure
+                if ('start_time' in scheduling_result and 
+                    'end_time' in scheduling_result):
+                    
+                    # Validate datetime format
+                    try:
+                        from datetime import datetime
+                        start_dt = datetime.fromisoformat(scheduling_result['start_time'].replace('+05:30', ''))
+                        end_dt = datetime.fromisoformat(scheduling_result['end_time'].replace('+05:30', ''))
+                        
+                        # Ensure the meeting is in the future
+                        now = datetime.now()
+                        if start_dt > now:
+                            logger.info(f"✅ LLM scheduling successful:")
+                            logger.info(f"   📅 Start: {scheduling_result['start_time']}")
+                            logger.info(f"   📅 End: {scheduling_result['end_time']}")
+                            logger.info(f"   💭 Reasoning: {scheduling_result.get('reasoning', 'No reasoning provided')}")
+                            return scheduling_result
+                        else:
+                            logger.warning(f"❌ LLM suggested past time: {scheduling_result['start_time']}")
+                            
+                    except ValueError as e:
+                        logger.warning(f"❌ Invalid datetime format in LLM response: {e}")
+                else:
+                    logger.warning(f"❌ LLM response missing required fields: {list(scheduling_result.keys())}")
+            else:
+                logger.warning(f"❌ Could not extract valid JSON from LLM response")
             
         except json.JSONDecodeError as e:
-            logger.warning(f"Failed to parse LLM scheduling response: {e}")
+            logger.warning(f"❌ Failed to parse LLM response as JSON: {e}")
+            logger.warning(f"   Raw response: {response}")
+        except Exception as e:
+            logger.warning(f"❌ Unexpected error parsing LLM response: {e}")
         
         # Fallback to algorithmic approach
+        logger.info(f"🔄 Falling back to algorithmic scheduling")
         return self._fallback_scheduling(meeting_request, calendar_data)
     
     def _format_calendar_data_for_llm(self, calendar_data: Dict[str, Any]) -> str:

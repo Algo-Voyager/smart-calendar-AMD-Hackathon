@@ -21,8 +21,28 @@ class SmartScheduler:
     
     def __init__(self, model_name: str = None):
         self.config = Config()
-        self.calendar_manager = CalendarManager()
-        self.llm_client = LLMClient(model_name)
+        
+        # Try to use real calendar manager, fallback to mock if dependencies missing
+        try:
+            from src.calendar.calendar_manager import CalendarManager
+            self.calendar_manager = CalendarManager()
+            logger.info("✅ Using real Google Calendar integration")
+        except ImportError as e:
+            logger.warning(f"⚠️  Google Calendar dependencies not available: {e}")
+            logger.info("🔄 Using mock calendar manager for testing")
+            from src.calendar.mock_calendar_manager import MockCalendarManager
+            self.calendar_manager = MockCalendarManager()
+        
+        # Try to use real LLM client, fallback to mock if dependencies missing  
+        try:
+            from src.ai_agent.llm_client import LLMClient
+            self.llm_client = LLMClient(model_name)
+            logger.info("✅ Using real LLM client")
+        except ImportError as e:
+            logger.warning(f"⚠️  LLM dependencies not available: {e}")
+            logger.info("🔄 Using mock LLM client for testing")
+            from src.ai_agent.mock_llm_client import MockLLMClient
+            self.llm_client = MockLLMClient()
         
         logger.info("SmartScheduler initialized")
     
@@ -154,51 +174,88 @@ class SmartScheduler:
         """Parse time constraints and return start/end dates"""
         now = datetime.now()
         
-        constraints_lower = time_constraints.lower()
+        constraints_lower = time_constraints.lower().strip()
+        
+        logger.info(f"🔍 PARSING TIME CONSTRAINTS: '{time_constraints}' -> '{constraints_lower}'")
         
         if 'next week' in constraints_lower:
             # Start from next Monday
             days_ahead = 7 - now.weekday()
             start_date = now + timedelta(days=days_ahead)
             end_date = start_date + timedelta(days=7)
+            logger.info(f"   📅 Parsed as: Next week ({start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')})")
         elif 'tomorrow' in constraints_lower:
             start_date = now + timedelta(days=1)
             end_date = start_date + timedelta(days=1)
+            logger.info(f"   📅 Parsed as: Tomorrow ({start_date.strftime('%Y-%m-%d')})")
         elif 'today' in constraints_lower:
             start_date = now
             end_date = now + timedelta(days=1)
+            logger.info(f"   📅 Parsed as: Today ({start_date.strftime('%Y-%m-%d')})")
         elif 'this week' in constraints_lower:
             # Rest of this week
             start_date = now
             days_until_sunday = 6 - now.weekday()
             end_date = now + timedelta(days=days_until_sunday)
-        elif any(day in constraints_lower for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday']):
+            logger.info(f"   📅 Parsed as: This week ({start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')})")
+        elif any(day in constraints_lower for day in ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']):
             # Specific day - find next occurrence
             days = ['monday', 'tuesday', 'wednesday', 'thursday', 'friday', 'saturday', 'sunday']
             target_day = None
+            target_day_name = None
+            
             for day in days:
                 if day in constraints_lower:
                     target_day = days.index(day)
+                    target_day_name = day.title()
                     break
             
             if target_day is not None:
-                days_ahead = (target_day - now.weekday()) % 7
-                if days_ahead == 0:  # If it's today, move to next week
+                current_weekday = now.weekday()
+                days_ahead = (target_day - current_weekday) % 7
+                
+                # If it's the same day but past business hours, move to next week
+                if days_ahead == 0:
+                    if now.hour >= self.config.BUSINESS_HOURS_END:
+                        days_ahead = 7
+                    else:
+                        # It's today and still during business hours
+                        days_ahead = 0
+                
+                # If the target day is earlier in the week, move to next week
+                if days_ahead == 0 and target_day < current_weekday:
                     days_ahead = 7
+                    
                 start_date = now + timedelta(days=days_ahead)
                 end_date = start_date + timedelta(days=1)
+                
+                # Ensure we're looking at the right day
+                if start_date.weekday() != target_day:
+                    # Recalculate to be sure
+                    days_ahead = (target_day - now.weekday()) % 7
+                    if days_ahead == 0:
+                        days_ahead = 7  # Next week if same day
+                    start_date = now + timedelta(days=days_ahead)
+                    end_date = start_date + timedelta(days=1)
+                
+                logger.info(f"   📅 Parsed as: Next {target_day_name} ({start_date.strftime('%Y-%m-%d %A')})")
+                logger.info(f"   🔢 Days ahead calculation: current_weekday={current_weekday}, target_day={target_day}, days_ahead={days_ahead}")
             else:
                 # Default case
                 start_date = now + timedelta(days=1)
                 end_date = start_date + timedelta(days=7)
+                logger.info(f"   📅 Parsed as: Default next 7 days ({start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')})")
         else:
             # Default: next 7 days
             start_date = now + timedelta(days=1)
             end_date = start_date + timedelta(days=7)
+            logger.info(f"   📅 Parsed as: Flexible - next 7 days ({start_date.strftime('%Y-%m-%d')} to {end_date.strftime('%Y-%m-%d')})")
         
         # Format for Google Calendar API
         start_str = start_date.strftime('%Y-%m-%dT00:00:00+05:30')
         end_str = end_date.strftime('%Y-%m-%dT23:59:59+05:30')
+        
+        logger.info(f"   🎯 FINAL DATE RANGE: {start_str} to {end_str}")
         
         return start_str, end_str
     

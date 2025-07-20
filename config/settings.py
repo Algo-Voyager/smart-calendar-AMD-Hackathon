@@ -49,39 +49,59 @@ class Config:
     CALENDAR_DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S%z"
     
     # Optimized AI Agent Prompts for Llama-3.2-3B
-    EMAIL_PARSING_PROMPT = """Extract meeting info from email. Return JSON only.
+    EMAIL_PARSING_PROMPT = """You are a meeting scheduler. Extract meeting information from the email below and return ONLY a valid JSON response.
 
-Required format:
-{{"participants": ["email1", "email2"], "duration_minutes": 30, "time_constraints": "constraint", "topic": "topic"}}
+REQUIRED JSON FORMAT:
+{{"participants": ["email1@domain.com", "email2@domain.com"], "duration_minutes": 30, "time_constraints": "specific_constraint", "topic": "meeting_topic"}}
 
-Rules:
-- If names only, add {domain}
-- Default duration: {default_duration} minutes
-- Extract time constraints like "next week", "Thursday"
+EXTRACTION RULES:
+1. Extract ALL participant email addresses
+2. If only names provided, append {domain} 
+3. Duration: Extract from phrases like "30 minutes", "1 hour", "half hour" (default: {default_duration})
+4. Time constraints: Extract specific time references like:
+   - "Thursday" → "thursday"
+   - "next week" → "next week" 
+   - "tomorrow" → "tomorrow"
+   - "Monday morning" → "monday"
+5. Topic: Extract main meeting purpose or use email subject
 
-Email: {email_content}
+EMAIL CONTENT: {email_content}
 
-JSON:"""
-    
-    SCHEDULING_PROMPT = """Find optimal meeting time. Return JSON only.
+Return ONLY the JSON object (no explanations):"""
 
-Meeting: {topic}, {duration} mins
-Participants: {participants}
-Constraints: {time_constraints}
-Current: {current_time}
+    SCHEDULING_PROMPT = """You are an AI scheduling assistant. Find the optimal meeting time and return ONLY a valid JSON response.
 
-Calendar conflicts:
+MEETING DETAILS:
+- Topic: {topic}
+- Duration: {duration} minutes
+- Participants: {participants}
+- Time Constraint: {time_constraints}
+- Current Time: {current_time}
+
+PARTICIPANT CALENDARS:
 {calendar_data}
 
-Rules:
-- Business hours: 9 AM - 6 PM IST
-- Avoid conflicts
-- Respect constraints
+SCHEDULING RULES:
+1. Business hours: 9:00 AM - 6:00 PM IST (Monday-Friday)
+2. Avoid ALL calendar conflicts 
+3. Respect the time constraint "{time_constraints}":
+   - "thursday" = next Thursday between 9 AM - 6 PM
+   - "next week" = any day next week during business hours
+   - "tomorrow" = tomorrow during business hours
+   - "flexible" = any available business hours slot
+4. Choose earliest available slot that meets all criteria
+5. Format times as: YYYY-MM-DDTHH:MM:SS+05:30
 
-Format:
-{{"start_time": "YYYY-MM-DDTHH:MM:SS+05:30", "end_time": "YYYY-MM-DDTHH:MM:SS+05:30", "reasoning": "why"}}
+REQUIRED JSON FORMAT:
+{{"start_time": "2025-07-24T10:00:00+05:30", "end_time": "2025-07-24T10:30:00+05:30", "reasoning": "Found available slot on Thursday morning with no conflicts for all participants"}}
 
-JSON:"""
+IMPORTANT: 
+- Check for time overlaps carefully
+- If "{time_constraints}" specifies a day, find that specific day
+- Ensure the duration matches exactly
+- Account for IST timezone (+05:30)
+
+Return ONLY the JSON object (no explanations):"""
 
     @classmethod
     def get_model_config(cls, model_name: str = None) -> Dict[str, str]:
