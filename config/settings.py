@@ -49,62 +49,32 @@ class Config:
     CALENDAR_DATETIME_FORMAT = "%Y-%m-%dT%H:%M:%S%z"
     
     # Optimized AI Agent Prompts for Llama-3.2-3B
-    EMAIL_PARSING_PROMPT = """You are a meeting scheduler. Extract meeting information from the email below and return ONLY a valid JSON response.
+    EMAIL_PARSING_PROMPT = """Extract meeting info. Return JSON only.
 
-REQUIRED JSON FORMAT:
-{{"participants": ["email1@domain.com", "email2@domain.com"], "duration_minutes": 30, "time_constraints": "specific_constraint", "topic": "meeting_topic", "priority": "normal"}}
+Format: {{"participants": ["email@domain"], "duration_minutes": 30, "time_constraints": "day", "topic": "topic", "priority": "normal"}}
 
-EXTRACTION RULES:
-1. Extract ALL participant email addresses
-2. If only names provided, append {domain} 
-3. Duration: Extract from phrases like "30 minutes", "1 hour", "half hour" (default: {default_duration})
-4. Time constraints: Extract specific time references like:
-   - "Thursday" → "thursday"
-   - "next week" → "next week" 
-   - "tomorrow" → "tomorrow"
-   - "Monday morning" → "monday"
-5. Topic: Extract main meeting purpose or use email subject
-6. Priority: Detect priority level:
-   - "high" if content contains: urgent, ASAP, critical, emergency, high priority, must schedule, required, mandatory, deadline, time sensitive, crisis
-   - "normal" for regular meetings
+Rules:
+- Add {domain} if only names
+- Duration from "30 min", "1 hour" etc (default: {default_duration})
+- Constraints: "thursday", "monday at 9am", etc
+- Priority: "high" if urgent/critical/asap, else "normal"
 
-EMAIL CONTENT: {email_content}
+Email: {email_content}
 
-Return ONLY the JSON object (no explanations):"""
+JSON:"""
 
-    SCHEDULING_PROMPT = """You are an AI scheduling assistant. Find the optimal meeting time and return ONLY a valid JSON response.
+    SCHEDULING_PROMPT = """Find meeting time. Return JSON only.
 
-MEETING DETAILS:
-- Topic: {topic}
-- Duration: {duration} minutes
-- Participants: {participants}
-- Time Constraint: {time_constraints}
-- Current Time: {current_time}
+Meeting: {topic} ({duration}min)
+Participants: {participants}
+When: {time_constraints}
+Current: {current_time}
 
-PARTICIPANT CALENDARS:
-{calendar_data}
+Calendars: {calendar_data}
 
-SCHEDULING RULES:
-1. Business hours: 9:00 AM - 6:00 PM IST (Monday-Friday)
-2. Avoid ALL calendar conflicts 
-3. Respect the time constraint "{time_constraints}":
-   - "thursday" = next Thursday between 9 AM - 6 PM
-   - "next week" = any day next week during business hours
-   - "tomorrow" = tomorrow during business hours
-   - "flexible" = any available business hours slot
-4. Choose earliest available slot that meets all criteria
-5. Format times as: YYYY-MM-DDTHH:MM:SS+05:30
+Rules: Business hours 9AM-6PM IST, avoid conflicts, respect "{time_constraints}".
 
-REQUIRED JSON FORMAT:
-{{"start_time": "2025-07-24T10:00:00+05:30", "end_time": "2025-07-24T10:30:00+05:30", "reasoning": "Found available slot on Thursday morning with no conflicts for all participants"}}
-
-IMPORTANT: 
-- Check for time overlaps carefully
-- If "{time_constraints}" specifies a day, find that specific day
-- Ensure the duration matches exactly
-- Account for IST timezone (+05:30)
-
-Return ONLY the JSON object (no explanations):"""
+Return: {{"start_time": "YYYY-MM-DDTHH:MM:SS+05:30", "end_time": "YYYY-MM-DDTHH:MM:SS+05:30", "reasoning": "brief reason"}}"""
 
     @classmethod
     def get_model_config(cls, model_name: str = None) -> Dict[str, str]:

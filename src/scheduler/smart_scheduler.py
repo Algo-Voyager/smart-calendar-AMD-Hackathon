@@ -127,45 +127,33 @@ class SmartScheduler:
             attendees, start_date, end_date
         )
         
-        # Convert CalendarEvent objects to dictionaries and log details
+        # Convert CalendarEvent objects to dictionaries and filter out noise
         calendar_data = {}
         logger.info(f"📝 DETAILED MEMBER ANALYSIS:")
         
         for email, events in calendar_events.items():
-            event_dicts = [event.to_dict() for event in events]
-            calendar_data[email] = event_dicts
+            # Filter out off-hours events and excessive noise
+            filtered_events = []
+            for event in events:
+                summary = event.summary.lower()
+                # Skip off-hours blocking events and self-only events
+                if ('off hours' not in summary and 
+                    'SELF' not in event.attendees and
+                    len(filtered_events) < 5):  # Limit to max 5 events per person
+                    filtered_events.append(event.to_dict())
             
-            # Log detailed analysis for each member
-            logger.info(f"   📧 {email}:")
-            logger.info(f"      📊 Total meetings: {len(events)}")
+            calendar_data[email] = filtered_events
             
-            if events:
-                off_hours_meetings = []
-                business_hours_meetings = []
-                
-                for event in events:
-                    start_time = datetime.fromisoformat(event.start_time.replace('+05:30', ''))
-                    is_off_hours = (start_time.hour < self.config.BUSINESS_HOURS_START or 
-                                   start_time.hour >= self.config.BUSINESS_HOURS_END or
-                                   start_time.weekday() >= 5)
-                    
-                    if is_off_hours:
-                        off_hours_meetings.append(event)
-                    else:
-                        business_hours_meetings.append(event)
-                
-                logger.info(f"      🏢 Business hours meetings: {len(business_hours_meetings)}")
-                logger.info(f"      🌙 Off hours meetings: {len(off_hours_meetings)}")
-                
-                # Log specific off-hours meetings
-                if off_hours_meetings:
-                    logger.info(f"      🌙 OFF HOURS MEETINGS DETAILS:")
-                    for i, event in enumerate(off_hours_meetings, 1):
-                        logger.info(f"         {i}. {event.summary}")
-                        logger.info(f"            Time: {event.start_time} to {event.end_time}")
-                        logger.info(f"            Attendees: {', '.join(event.attendees)}")
+            # Log summary only
+            logger.info(f"   📧 {email}: {len(filtered_events)} relevant meetings")
+            
+            if filtered_events:
+                for event in filtered_events[:3]:  # Show only first 3
+                    logger.info(f"      - {event['Summary']}: {event['StartTime'][:16]}")
+                if len(filtered_events) > 3:
+                    logger.info(f"      ... and {len(filtered_events) - 3} more")
             else:
-                logger.info(f"      ✅ No existing meetings found")
+                logger.info(f"      ✅ No conflicting meetings found")
         
         logger.info(f"✅ Calendar data analysis completed for all {len(attendees)} members")
         return calendar_data
@@ -290,9 +278,10 @@ class SmartScheduler:
         
         duration = meeting_params.get('duration_minutes', 30)
         time_constraints = meeting_params.get('time_constraints', 'flexible')
+        specific_time = meeting_params.get('specific_time')  # 🕐 NEW: Get specific time
         
-        # Find the preferred time slot based on constraints
-        preferred_slot = self._find_preferred_time_slot(time_constraints, duration)
+        # Find the preferred time slot based on constraints and specific time
+        preferred_slot = self._find_preferred_time_slot(time_constraints, duration, specific_time)
         
         if not preferred_slot:
             logger.warning(f"❌ Could not determine preferred slot, falling back to normal scheduling")
@@ -479,66 +468,83 @@ class SmartScheduler:
                 'reasoning': 'No common free time found, suggesting default slot'
             }
     
-    def _find_preferred_time_slot(self, time_constraints: str, duration: int) -> Optional[tuple[str, str]]:
-        """Find preferred time slot based on constraints"""
+    def _find_preferred_time_slot(self, time_constraints: str, duration: int, 
+                             specific_time: str = None) -> Optional[tuple[str, str]]:
+        """Find preferred time slot based on constraints and specific time"""
         
         constraints_lower = time_constraints.lower().strip()
         now = datetime.now()
         
+        # Default hour and minute
+        preferred_hour = 9  # Default to 9 AM
+        preferred_minute = 0
+        
+        # Use specific time if provided
+        if specific_time:
+            try:
+                hour_str, minute_str = specific_time.split(':')
+                preferred_hour = int(hour_str)
+                preferred_minute = int(minute_str)
+                logger.info(f"🕐 Using specific time: {preferred_hour:02d}:{preferred_minute:02d}")
+            except (ValueError, AttributeError):
+                logger.warning(f"⚠️  Invalid specific time format: {specific_time}, using default 9:00 AM")
+        
         if 'thursday' in constraints_lower:
-            # Find next Thursday at 9 AM (preferred business start time)
+            # Find next Thursday at specified time
             days_ahead = (3 - now.weekday()) % 7  # Thursday is weekday 3
             if days_ahead == 0:
                 if now.hour >= 18:  # Past business hours
                     days_ahead = 7
-                elif now.hour >= 9:  # Same day but need future time
+                elif now.hour >= preferred_hour:  # Past the preferred time
                     days_ahead = 7
             if days_ahead == 0:
                 days_ahead = 7
                 
             next_thursday = now + timedelta(days=days_ahead)
-            preferred_start = next_thursday.replace(hour=9, minute=0, second=0, microsecond=0)
+            preferred_start = next_thursday.replace(hour=preferred_hour, minute=preferred_minute, second=0, microsecond=0)
             
         elif 'monday' in constraints_lower:
             days_ahead = (0 - now.weekday()) % 7
-            if days_ahead == 0 and now.hour >= 9:
+            if days_ahead == 0 and now.hour >= preferred_hour:
                 days_ahead = 7
             next_monday = now + timedelta(days=days_ahead)
-            preferred_start = next_monday.replace(hour=9, minute=0, second=0, microsecond=0)
+            preferred_start = next_monday.replace(hour=preferred_hour, minute=preferred_minute, second=0, microsecond=0)
             
         elif 'tuesday' in constraints_lower:
             days_ahead = (1 - now.weekday()) % 7
-            if days_ahead == 0 and now.hour >= 9:
+            if days_ahead == 0 and now.hour >= preferred_hour:
                 days_ahead = 7
             next_tuesday = now + timedelta(days=days_ahead)
-            preferred_start = next_tuesday.replace(hour=9, minute=0, second=0, microsecond=0)
+            preferred_start = next_tuesday.replace(hour=preferred_hour, minute=preferred_minute, second=0, microsecond=0)
             
         elif 'wednesday' in constraints_lower:
             days_ahead = (2 - now.weekday()) % 7
-            if days_ahead == 0 and now.hour >= 9:
+            if days_ahead == 0 and now.hour >= preferred_hour:
                 days_ahead = 7
             next_wednesday = now + timedelta(days=days_ahead)
-            preferred_start = next_wednesday.replace(hour=9, minute=0, second=0, microsecond=0)
+            preferred_start = next_wednesday.replace(hour=preferred_hour, minute=preferred_minute, second=0, microsecond=0)
             
         elif 'friday' in constraints_lower:
             days_ahead = (4 - now.weekday()) % 7
-            if days_ahead == 0 and now.hour >= 9:
+            if days_ahead == 0 and now.hour >= preferred_hour:
                 days_ahead = 7
             next_friday = now + timedelta(days=days_ahead)
-            preferred_start = next_friday.replace(hour=9, minute=0, second=0, microsecond=0)
+            preferred_start = next_friday.replace(hour=preferred_hour, minute=preferred_minute, second=0, microsecond=0)
             
         elif 'tomorrow' in constraints_lower:
             tomorrow = now + timedelta(days=1)
-            preferred_start = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+            preferred_start = tomorrow.replace(hour=preferred_hour, minute=preferred_minute, second=0, microsecond=0)
             
         else:
-            # Default: next business day at 9 AM
+            # Default: next business day at specified time
             tomorrow = now + timedelta(days=1)
             while tomorrow.weekday() >= 5:  # Skip weekends
                 tomorrow += timedelta(days=1)
-            preferred_start = tomorrow.replace(hour=9, minute=0, second=0, microsecond=0)
+            preferred_start = tomorrow.replace(hour=preferred_hour, minute=preferred_minute, second=0, microsecond=0)
         
         preferred_end = preferred_start + timedelta(minutes=duration)
+        
+        logger.info(f"🎯 PREFERRED SLOT CALCULATED: {preferred_start.strftime('%A, %B %d at %I:%M %p')} ({duration} mins)")
         
         return (
             preferred_start.strftime('%Y-%m-%dT%H:%M:%S+05:30'),

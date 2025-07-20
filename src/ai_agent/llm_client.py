@@ -285,19 +285,40 @@ class LLMClient:
         
         # Enhanced time constraint detection
         time_constraints = "flexible"
+        specific_time = None  # Store specific time if mentioned
+
+        # Updated time patterns to include specific times
         time_patterns = [
-            r'next\s+week',
-            r'this\s+week',
-            r'tomorrow',
-            r'today',
-            r'(?:next\s+)?(?:monday|tuesday|wednesday|thursday|friday|saturday|sunday)',
-            r'(?:this|next)\s+(?:monday|tuesday|wednesday|thursday|friday)',
+            (r'next\s+week', 'next week'),
+            (r'this\s+week', 'this week'), 
+            (r'tomorrow', 'tomorrow'),
+            (r'today', 'today'),
+            (r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+at\s+(\d{1,2}):?(\d{0,2})\s*(am|pm)', 'specific_day_time'),
+            (r'(monday|tuesday|wednesday|thursday|friday|saturday|sunday)\s+(\d{1,2}):?(\d{0,2})\s*(am|pm)', 'specific_day_time'),
+            (r'(?:next\s+)?(monday|tuesday|wednesday|thursday|friday|saturday|sunday)', 'day_only'),
+            (r'(?:this|next)\s+(monday|tuesday|wednesday|thursday|friday)', 'day_only'),
         ]
-        
-        for pattern in time_patterns:
+
+        for pattern, constraint_type in time_patterns:
             match = re.search(pattern, content_lower)
             if match:
-                time_constraints = match.group(0)
+                if constraint_type == 'specific_day_time':
+                    day = match.group(1)
+                    hour = int(match.group(2))
+                    minute = int(match.group(3)) if match.group(3) else 0
+                    ampm = match.group(4)
+                    
+                    # Convert to 24-hour format
+                    if ampm == 'pm' and hour != 12:
+                        hour += 12
+                    elif ampm == 'am' and hour == 12:
+                        hour = 0
+                        
+                    time_constraints = day
+                    specific_time = f"{hour:02d}:{minute:02d}"
+                    logger.info(f"🕐 Specific time detected: {day} at {specific_time}")
+                else:
+                    time_constraints = match.group(0) if constraint_type in ['next week', 'this week', 'tomorrow', 'today'] else match.group(1)
                 break
         
         # Enhanced topic extraction
@@ -358,7 +379,8 @@ class LLMClient:
             'duration_minutes': duration,
             'time_constraints': time_constraints,
             'topic': topic,
-            'priority': priority  # 🎯 NEW: Add priority field
+            'priority': priority,  # 🎯 NEW: Add priority field
+            'specific_time': specific_time  # 🕐 NEW: Add specific time if detected
         }
     
     def _fallback_email_parsing(self, email_content: str, default_duration: int) -> Dict[str, Any]:
@@ -453,25 +475,38 @@ class LLMClient:
             'topic': topic
         }
     
+    def _estimate_tokens(self, text: str) -> int:
+        """Rough estimation of token count (approximately 4 chars per token)"""
+        return len(text) // 4
+
     def find_optimal_meeting_time(self, meeting_request: Dict[str, Any], 
                                 calendar_data: Dict[str, Any], 
                                 current_time: str) -> Dict[str, Any]:
         """Use LLM to find optimal meeting time"""
         
-        # Format calendar data for LLM
+        # Format calendar data for LLM (now much more concise)
         calendar_summary = self._format_calendar_data_for_llm(calendar_data)
         
         prompt = self.config.SCHEDULING_PROMPT.format(
-            topic=meeting_request.get('topic', 'Meeting'),
+            topic=meeting_request.get('topic', 'Meeting')[:50],  # Limit topic length
             duration=meeting_request.get('duration_minutes', 30),
-            participants=', '.join(meeting_request.get('participants', [])),
-            time_constraints=meeting_request.get('time_constraints', 'flexible'),
+            participants=', '.join(meeting_request.get('participants', []))[:100],  # Limit participants
+            time_constraints=meeting_request.get('time_constraints', 'flexible')[:30],
             current_time=current_time,
-            calendar_data=calendar_summary
+            calendar_data=calendar_summary[:300]  # Limit calendar data length
         )
         
-        logger.info(f"🤖 LLM SCHEDULING PROMPT:")
-        logger.info(f"   📝 Sending prompt to LLM (first 500 chars): {prompt[:500]}...")
+        # Estimate token count and skip LLM if too large
+        estimated_tokens = self._estimate_tokens(prompt)
+        
+        logger.info(f"🤖 LLM SCHEDULING REQUEST:")
+        logger.info(f"   📏 Estimated tokens: {estimated_tokens}")
+        
+        if estimated_tokens > 1500:  # Conservative limit
+            logger.warning(f"⚠️  Prompt too long ({estimated_tokens} tokens), using algorithmic scheduling")
+            return self._fallback_scheduling(meeting_request, calendar_data)
+        
+        logger.info(f"   📝 Sending prompt to LLM...")
         
         response = self._make_completion_request(prompt, temperature=0.1)
         
@@ -479,7 +514,7 @@ class LLMClient:
             logger.warning("❌ No response from LLM, using fallback scheduling")
             return self._fallback_scheduling(meeting_request, calendar_data)
         
-        logger.info(f"🤖 LLM RAW RESPONSE: {response}")
+        logger.info(f"🤖 LLM RESPONSE: {response[:200]}...")  # Show only first 200 chars
         
         try:
             # Clean and extract JSON from response
@@ -546,18 +581,27 @@ class LLMClient:
         return self._fallback_scheduling(meeting_request, calendar_data)
     
     def _format_calendar_data_for_llm(self, calendar_data: Dict[str, Any]) -> str:
-        """Format calendar data in a readable format for LLM"""
+        """Format calendar data in a concise format for LLM (optimized for token limits)"""
         formatted_data = []
         
         for email, events in calendar_data.items():
-            event_list = []
+            # Filter out "Off Hours" events and limit to relevant events only
+            relevant_events = []
             for event in events:
-                event_list.append(f"  - {event['Summary']}: {event['StartTime']} to {event['EndTime']}")
+                summary = event.get('Summary', '')
+                # Skip off-hours blocking events and very long events
+                if ('off hours' not in summary.lower() and 
+                    'SELF' not in event.get('Attendees', []) and
+                    len(relevant_events) < 3):  # Limit to max 3 events per person
+                    relevant_events.append(f"{summary}: {event['StartTime'][:16]}")
             
-            events_str = "\n".join(event_list) if event_list else "  - No events"
-            formatted_data.append(f"{email}:\n{events_str}")
+            if relevant_events:
+                events_str = "; ".join(relevant_events)
+                formatted_data.append(f"{email.split('@')[0]}: {events_str}")
+            else:
+                formatted_data.append(f"{email.split('@')[0]}: Available")
         
-        return "\n\n".join(formatted_data)
+        return " | ".join(formatted_data)
     
     def _fallback_scheduling(self, meeting_request: Dict[str, Any], 
                            calendar_data: Dict[str, Any]) -> Dict[str, Any]:

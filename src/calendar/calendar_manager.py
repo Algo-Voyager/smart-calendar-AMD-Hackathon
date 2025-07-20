@@ -145,16 +145,15 @@ class CalendarManager:
                     )
                     calendar_events.append(calendar_event)
             
-            # Log all existing meetings for the member before scheduling
-            logger.info(f"📋 EXISTING MEETINGS LOG for {email}:")
-            logger.info(f"   Total events found: {len(calendar_events)}")
+            # Log simplified summary for the member
+            logger.info(f"📋 EVENTS for {email}: {len(calendar_events)} total")
             
+            # Count and log only summary
             off_hours_count = 0
             business_hours_count = 0
             
-            for i, event in enumerate(calendar_events, 1):
+            for event in calendar_events:
                 start_time = datetime.fromisoformat(event.start_time.replace('+05:30', ''))
-                end_time = datetime.fromisoformat(event.end_time.replace('+05:30', ''))
                 
                 # Check if event is during off hours
                 is_off_hours = (start_time.hour < self.config.BUSINESS_HOURS_START or 
@@ -163,19 +162,19 @@ class CalendarManager:
                 
                 if is_off_hours:
                     off_hours_count += 1
-                    logger.info(f"   🌙 OFF HOURS Event {i}: {event.summary}")
                 else:
                     business_hours_count += 1
-                    logger.info(f"   🏢 BUSINESS HOURS Event {i}: {event.summary}")
-                
-                logger.info(f"      Time: {event.start_time} to {event.end_time}")
-                logger.info(f"      Attendees: {event.attendees}")
-                logger.info(f"      Duration: {(end_time - start_time).total_seconds() / 60:.0f} minutes")
             
-            logger.info(f"📊 MEETING SUMMARY for {email}:")
-            logger.info(f"   🏢 Business hours meetings: {business_hours_count}")
-            logger.info(f"   🌙 Off hours meetings: {off_hours_count}")
-            logger.info(f"   📅 Total meetings: {len(calendar_events)}")
+            # Log only the summary
+            if calendar_events:
+                logger.info(f"   🏢 Business hours: {business_hours_count}, 🌙 Off hours: {off_hours_count}")
+                # Show only first 2 meetings for reference
+                for i, event in enumerate(calendar_events[:2]):
+                    logger.info(f"   {i+1}. {event.summary}: {event.start_time[:16]}")
+                if len(calendar_events) > 2:
+                    logger.info(f"   ... and {len(calendar_events) - 2} more meetings")
+            else:
+                logger.info(f"   ✅ No meetings found")
             
             # Cache the results
             self._cache_events(cache_key, calendar_events)
@@ -295,10 +294,12 @@ class CalendarManager:
                         (slot_start + duration).strftime('%Y-%m-%dT%H:%M:%S+05:30')
                     )
                     
-                    if is_off_hours:
-                        logger.info(f"   🌙 Found OFF HOURS free slot for {email}: {slot_info[0]} to {slot_info[1]}")
-                    else:
-                        logger.info(f"   🏢 Found BUSINESS HOURS free slot for {email}: {slot_info[0]} to {slot_info[1]}")
+                    # Reduced logging - only log first few slots to avoid spam
+                    if len(free_slots) < 2:  # Only log first 2 slots found
+                        if is_off_hours:
+                            logger.debug(f"   🌙 Found OFF HOURS free slot for {email}: {slot_info[0]} to {slot_info[1]}")
+                        else:
+                            logger.debug(f"   🏢 Found BUSINESS HOURS free slot for {email}: {slot_info[0]} to {slot_info[1]}")
                     
                     free_slots.append(slot_info)
             
